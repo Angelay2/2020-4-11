@@ -7,6 +7,7 @@ int main(){
     int c = a + b;
     //int* lp = NULL;
     //*lp = 10;
+    
     printf("c = %d\n", c);
     return 0;
 }
