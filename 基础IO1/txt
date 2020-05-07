@@ -1,0 +1,110 @@
+minishell
+    1. 融合进程创建, 进程等待, 进程程序替换等知识
+    2. bash本身也是一个程序, 是在操作系统启动之初就启动的程序, 输入的所有命令都是和bash沟通的. 可以推测出ls. pwd, cd.. linux命令都是可执行程序
+    3. 实现
+        3.1 需要从标准输入中获取用户输入的命令
+        3.2 需要创建子进程 让子进程程序替换执行刚刚从标准输入当中读取的命令
+        3.3 父进程需要在子进程替换的时候进行进程等待, 防止子进程成为僵尸进程
+
+基础IO
+    1. 文件流指针
+        1.1 打开文件
+            FILE* fopen(const char* path, const char* mode)
+                path: 需要打开哪一个文件的路径加文件名称(可以不加路径, 默认打开是当前路径下的文件)
+                mode: 以什么方式打开文件, 
+                    r: 以 读 方式打开, 如果打开的文件不存在, 则报错;
+                    r+: 以 读写 的方式打开, 如果打开的文件不存在, 则报错, ;
+                    w: 以 写 方式打开 如果文件不存在, 则创建(相当于vim命令); 如果存在 则将当前文件截断(将文件内容清空),文件流指针指向文件头部
+                    w+: 以 读写方式 打开, 如果文件不存在, 则创建; 如果存在, 则截断.
+                    a: 以 追加 方式打开, 如果文件不存在, 则创建; 在之前的文件后面添加内容;  并不能读文件   
+                    a+: 以 追加方式打开, 如果文件不存在, 则创建;  可以读文件, 在文件末尾进行写
+           ssize_t fread(const void* ptr, size_t size, size_t nmenb, FILE* stream)
+                ptr: 将读到的内容保存在ptr中
+                size: 块的大小(单位为字节)
+                nmemb: 块的个数(该参数值的含义为数值) ,
+                    size(大小) 乘以 nmemb(个数) = 要读多少字节
+                    eg: 一般将size置为1. 每一个块的大小是1字节; 要读多少字节, 则将块的个数设置为多少.  --> 读了1024个块, 每个块的大小为1个字节
+                stream: 从哪里去读, 文件流指针
+            ssize_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream)
+                ptr: 要写的数据内容
+                size: 块的大小(单位为字节)
+                nmemb: 块的个数(该参数值的含义为数值) ,
+                    常用的用法: 将size置为1. 写入的每一个块为1字节, 从而nmemb就是总共写的字节
+                stream: 从哪里去读, 文件流指针
+                返回值: 
+                    返回成功写入的块的个数
+            int fseek(FILE* stream, long offset, int whence) 决定要从哪里开始读
+                stream: 文件流指针
+                offset: 偏移量, 针对whence而言
+                whence: 
+                    SEEK_SET: 文件首部
+                    SEEK_END: 文件尾部
+                    SEEK_CUR: 当前位置
+            int fclose(FILE* fp)  关闭文件
+                fp: 文件流指针
+
+            如果一直打开文件不关闭 打开到上限就停止了
+            ulimit -a: 查看 open files(单个进程可以打开文件的最大上限)
+            每个进程创建的时候, 都会默认打开三个文件流, stdin, stdout, strerr,   -->  所以最后显示的是打开1021次文件
+2. 系统调用文件操作(是以字节来说的, 更加明确字节, 不像库函数 是以块来说的)
+    2.1 打开文件
+        int open(const char* pathname, int flags, mode_t mode);
+            pathname:待打开文件的路径加上文件名称
+            flags: 以何种方式打开
+            mode: 对于新创建出来的文件,设置文件权限
+            返回值: 返回文件描述符(相当于操作文件的钥匙 --> 句柄)
+        ssize_t write(int fd, const void* buf, size_t count)
+            fd: 文件描述符, 在哪里进行写
+            buf: 写入的数据
+            count: 写入数据的大小
+        ssize_t read(int fd, void* buf, size_t count)
+            fd: 文件描述符, 从哪里进行读
+            buf: 读到哪里去
+            count: 最多可以读多少字节 , 需要预留'\0'的位置
+        off_t lseek(int fd, off_t offset, int whence)
+            fd: 需要操作的文件描述符
+            offset: 指的是偏移量
+            whence: 偏移到哪里去(SEEK_SET,SEEK_END,SEEK_CUR)
+        close(int fd);
+            fd: 需要关闭的文件描述符
+   2.2 文件描述符:
+        文件描述符是一个正整数
+        其实是内核当中维护的数组fd_array的下标, 下标从0开始, 所以文件描述符是一个正整数
+        当程序员操作文件时, 其实是通过文件描述符找到fd_array数组中对应的元素, 每一个元素都对应一个文件信息 内核通过操作元素对应的文件信息来实现文件操作
+        本身fd_array[]里的元素个数默认为32, 可以通过ulimit -a去修改open files的数组大小
+        struct files_struct* file 指向 struct files_struct(里有fd_array[]数组和struct file* --> 指向struct file(保存文件的源信息, 文件创建的时间, 权限大小... )  )
+        find /usr -name sched.h == task_struct(里面有struct files_struct* files)
+        查看内核源码的时候 可以使用一个工具 -->  ctags -R(在usr/src/kernels/.../include使用) 
+        跳转到定义: ctrl + l
+        跳转到光标上一个位置: ctrl + o
+
+   2.3 文件描述符的分配规则
+        最小未占用规则: 若把close(0)标准输入关闭了的话, 当前打开的文件描述符就会占据这个位置
+        
+    2.4 文件描述符和文件流指针的关系
+        struct_IO_FILE 结构体里有读缓冲区, 写缓冲区,还有int _fileno(用来_fileno保存文件描述符(0,1,2,3.))
+        每个缓冲区里有三个指针标识缓冲区
+       三个位置分别为起始位置(char* _IO_read/write_base), 当前到哪个位置了(_ptr), 缓冲区的结束位置(_end)
+       
+3. 总结:
+    3.1  之前说的读写缓冲区是库函数当中维护的, 并非是内核维护的
+         引申出来的: 进程终止当中, 刷新缓冲区, 就是操作该缓冲区
+                    _exit(系统调用) & exit(库函数): 非常大的区别是exit会刷新缓冲区, 而前者不会, 因为exit本来就是库函数 且缓冲区是库函数维护的
+        但是_exit是内核维护的, 在关闭的时候并不知道有缓冲区的存在
+                
+        C语言中学到的操作符(fopen, fwrite, fclose, fseek, fread)这些是通过先创建并打开struct_IO_FILE这个结构体 进而找到_fileno从而找到文件描述符 来对文件操作
+        而系统调用文件操作fu(open , write, close, lseek, read)这些事直接操作文件描述符的
+    3.2 为什么使用文件流指针的时候, 打印内容时, 如果不加'\n'或者其他强制刷新缓冲区的操作, 就不会直接打印到屏幕上
+            由于打印的内容是写到缓冲区的
+    3.3 不管是使用文件流操作
+
+            
+
+
+
+            
+
+
+
+
+
