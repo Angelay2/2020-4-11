@@ -1,0 +1,116 @@
+系统调用文件操作:
+    打开文件
+        int open(const char* pathname, int flags, mode_t mode)
+            pathname: 待打开的文件路径节文件名称
+            flags: 以何种方式打开
+                必选项: 三者必须取其一, 且不能同时使用
+                O_RDONLY: 以只读方式打开
+                O_WRONLY: 以只写方式打开
+                O_RDWR: 以读写方式打开
+                可选项: 可以选择多个附加使用,
+                O_CREAT: 如果打开文件不存在, 则创建文件
+                O_TRUNK: 打开文件之后, 截断文件(清空文件)
+                O_APPEND: 以追加方式打开
+                使用方式: 组合使用的时候, 采用按位或的方式来进行我们的组合 0X01 | 0X02 --> 00000011
+                mode: 权限: 可以使用八进制进行表示0xxx
+            返回值: 返回文件描述符
+
+        ssize_t write(int fd, const void* buf, size_t count)
+            fd: 套接字描述符
+            buf: 要写的数据
+            count: 写的数据的大小(长度)
+        ssize_t read(int fd, const void buf, size_t count)
+            buf: 将数据读到哪里去(读到buf)
+            count: 最大可以读的数据大小( 需要预留'\0'的位置 buf-1 )
+        off_t lseek(int fd, off_t offset, int whence)
+            offset: 偏移量
+            whence: 偏移到哪里去
+                SEEK_CUR/SEEK_SET/SEEK_END
+        close(int fd): 关闭文件描述符
+
+文件描述符:
+    文件描述符是一个正整数, 代表的是内核当中fd_array这个数组的下标
+    当启动一个进程时, 默认会打开三个文件描述符(标准输入(0), 标准输出(1), 标准错误(2))
+    启动进程 -> 创建task_struct结构体 -> 中有struct files_struct* files变量, 指向struct files_struct(内核维护的) -> 有一个数组fd_array[xxx] -> 数组中的元素都是struct file*指针 -> 这些指针指向struct file(这个结构体中中包括文件的信息, 权限, 大小等)
+
+文件流指针和文件描述符的区别
+    文件描述符是内核维护的, open,write,read,lseek,close这些函数都是系统调用
+    文件流指针是C库维护的, 这里所使用的fopen,fread,fwrite,fseek.fclose这些函数都是库函数
+        C库当中维护了两个缓冲区, 分别是读缓冲区和写缓冲区. 针对标准输入和标准输出
+        FILE是C库当中typedef出来的, 本质是struct_IO_FILE这个结构体, 
+        使用C库 -> 创建struct_IO_FILE结构体(在libio.h中定义) -> 里面有读缓冲区和写缓冲区 和 int _fileno(包含文件描述符(下标)) ->找到所对应的结构体信息
+        使用C库 就是对读写缓冲区操作
+
+
+
+重定向:
+    本质: 
+        让我们的newfd文件描述符拷贝oldfd文件描述符,然后再关闭newfd, 标准输出拷贝tmpfile 指向新的struct file
+    标准输入, 标准输出, 标准错误各自所代表的struct file*都指向各自的struct file
+    现在我们打开一个文件tmpfile, 会自动创建一个struct file* 同样打开一个文件 struct file
+    将标准输入的内容重定向到我们的tmpfile当中, 让标准输出不要指向原来的struct file, 现在指向tmpfile的struct file, echo后就将内容写到了tmpfile
+int dup2(int oldfd, int newfd) 重定向的
+    oldfd和newfd都是文件描述符
+    将标准输出的内容重定向到tmpfile当中
+       fd = 1                fd = 3
+    1. newfd(标准输出)拷贝oldfd(tmpfile的文件描述符)
+    2. 关闭(newfd)标准输出
+    3. 当拷贝成功, 关闭newfd
+    4. 没有拷贝成功
+        4.1 如果拷贝的oldfd是一个无效的文件描述符, 则dup2什么都没有干,      切记: 没有关闭newfd
+        4.2 如果拷贝的oldfd是一个有效的文件描述符 但是要拷贝的newfd和oldfd具有相同的值, 则dup2同样什么都不干 也没有关闭newfd
+
+    // 将标准输出重定向到我们的tmpfile中去, 其实就是改变当前所保存的struct file地址, 拷贝的是文件描述符 -> 从而改变指向, 
+    // 让newfd拷贝oldfd , 改变的是newfd
+    // int dup2(int oldfd, int newfd);
+    // 前面是old(tmpfile), 后面是new(标准输出) 
+    // 需要被修改的是标准输出, 模板是tmpfile 
+
+    echo "hehe" > tmpfile 是清空 重写 (相当于带了O_TRUNK)
+    echo "hehe" >> tmpfile 是追加, 另起一行写  (相当于带了O_APPEND)
+
+
+静态库和动态库
+    静态库: 
+       1. Windows环境下的后缀是.lib, 在Windows环境下编译一个依赖库文件的库执行程序, 在编译阶段依赖静态库(.lib), 在程序运行阶段, 依赖动态库(.dll)
+       2. 静态库会将编译的代码当中所有的函数全部编译到静态库当中去; gcc -static静态链接指的是gcc或者g++的命令行参数; 静态库是一个库文件
+       3. -static: 如果程序是静态链接生成的可执行程序, 会将静态库当中的所有代码全部编译到可执行程序中去, 当程序执行的时候, 就不需要再依赖静态库了,
+       4. linux环境下, 后缀为.a, 前缀是lib(libxxx.a就是一个静态库), xxx就是库文件名称
+        5. 静态库的生成与使用
+            静态库的生成: 需要注意的是, 在生成静态库时, 是使用.o文件来进行编译生成的
+                ar -rc lib[库文件名称].a[xxx].o[xxx]
+        6. 静态库的使用
+            -L[path]指定连接点库文件路径,; -l[库文件名称(去了前缀和后缀的名称)]:指定链接库名称
+            eg: gcc main.c -o main -L [path] -l[库文件名称]
+   动态库
+        1. Windows环境下动态库的后缀是.dll
+        2. linux环境下动态库的后缀是.so, 前缀是lib
+        3. 动态库的生成和使用
+            生成:
+                gcc/g++
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
