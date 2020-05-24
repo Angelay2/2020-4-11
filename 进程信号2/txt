@@ -1,0 +1,62 @@
+int sigaction(int signum, const struct signaction* act, const struct signaction* oldact)                                 
+	这个哈数也是可以自定义信号的处理函数的
+	signum: 需要自定义的信号
+    struct sigaction{
+        void (*sa_handler)(int)  操作系统为每一个信号定义的默认调用函数
+        void (*sa_sigaction)(int, siginfo_t*, void*);  这也是一个函数指针, 但是这个函数指针一般是预留的, 需要配合sa_flags进行使用
+        sigset_t sa_mask; 当一个进程在处理信号的时候, 也有可能接受都按新的信号, 将新的信号放在sa_mask当中, sa_mask的类型是sigset_t(unsigned long sig[_NSIG_WOEDS]数组, 这样的数组被叫做sig位图),其实就是一个sig位图
+        int sa_flags; 当sa_flags为SA_SIGINFO的时候, 配合sa_sigaction进行使用
+    };
+    1. 默认情况下, 在处理一个信号的时候, 使用sa_handler当中保存的函数地址
+    2. 当sa_flags为SA_SIGINFO的时候, 
+    
+    sigaction函数是直接更改struct sigaction这样的结构体的;
+        在这个结构体中, 
+            void(*sa_handler)(int);  这里保存的是信号默认的处理函数, 改其实就是改这里的
+    signal函数是直接改函数指针, 而sigaction是直接改结构体 函数指针是包含在结构体里的
+        signal函数就是调用sigaction函数的
+    act:需要更改信号的处理函数而传入的struct sigaction结构体
+    oldact: 信号之前的struct sigaction结构体
+
+2. 啥时候处理信号
+    执行系统调用和库函数时, 其实是从用户空间切换到操作系统内核空间去执行的
+    在内核空间执行main函数里的sleep函数完后,若接收到一个信号时, 会调用一个do_signal函数返回到用户空间去执行sigcb函数,执行完后又要调用sigreturn函数返回到内核空间,再调用do_signal函数, 若是没有下一个信号, 再调用sysreturn函数返回到用户空间 
+        do_signal函数会先判断有没有信号,是处理信号的函数,
+    每次系统调用进入内核系统后, 处理完成系统调用函数的逻辑后在返回用户空间之前一定要调用do_signal函数
+3. 信号的阻塞
+    进程处理信号的时候, 会先判断block位图当中对应的比特位是否为1, 如果为1, 则暂时不处理;只有置为0 后才会处理这个信号
+    但是信号的注册还是可以正常注册的
+    信号的阻塞并不是说信号不能被注册, 不影响信号更改pending位图和增加sigqueue节点, 只不过是让我们暂时不去处理他
+    用户空间 --> 内核空间 --> 返回前调用do_signal函数, 发现某一个信号的比特位被置为1了, 想要处理这个信号之前, 先判断block位图当中对应信号的比特位是否为1,
+        输入信号, 先找到pending位图(判断信号是否注册了), 再看block(看是否阻塞, 为0则其sigqueue队列拿节点, 若为1,就不处理), 处理时才去到sigqueue队列中拿不阻塞的信号节点, 只有在处理的时候才去拿sigqueue结点,
+        1. 如果block位图当中对应的比特位为1, 则暂时不处理该信号, 当接触阻塞后, 才会被处理
+        2. 如果block位图当中对应的比特位为0, 则表示没有阻塞该信号, 正常处理
+    如何让某一个信号变成阻塞的?
+        接口:
+            int sigprocmask(int how, const sigset_t* set, sigset_t* oldset);
+                how: 通过不同的宏定义让sigprocmask执行不同的逻辑
+                    SIG_BLOCK --> 设置某个信号阻塞
+                    SIG_UNBLOCK --> 设置某个信号为非阻塞
+                    SIG_SETMASK --> 设置新的block位图
+                set: 要设置新的block位图
+                oldset: 老的block位图
+        使用:
+            SIG_BLOCK:
+                block(new) = block(old) | set  (若前者阻塞2号, 后者想阻塞3号, 则新的block位图则会阻塞2和3)
+            SIG_UNBLOCK:
+                block(new) = block(old) & (~set)   (将想要取消阻塞状态的这个比特位置为1,取反后该位变为0, 其他位全变为1, 但是老block位图中除了阻塞信号比特位为1之外, 其他的比特位都是1, 此时将取反的set和老block按位或, 0和1按位与后导致全变为了0 --> 非阻塞), 想要取消哪个比特位的阻塞状态就在set位图把这个比特位置为1,经过取反与老block按位与后最终就变为0而成为非阻塞了.
+            SIG_SETMASK:
+                block(new) = set             (不关心老block位图, 想让现在的位图变啥样 就是啥样)
+
+竞态条件
+    多个执行流访问同一个资源的情况下, 会对程序结果产生一个二义性的结果, 称之为竞态条件(家里多个孩子争父母的给予的资源)
+    重入: 多个执行流访问同一个资源(多人吃一个苹果, 可能是结构体, 可能是全局变量...)
+        可重入: 多个执行流访问同一个资源, 不会对程序结果产生影响
+        不可重入: 多个执行流访问同一个资源, 会对程序结果产生二义性
+
+编译器优化: 
+    O1,O2,O3,O4  随着数字增大 
+volatile: 保持变量的
+
+        
+
