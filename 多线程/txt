@@ -80,7 +80,7 @@
             2. 接口:
                 pthread_join(pthread_t, void**);
                     pthread: 等待的哪一个线程(当工作线程全部退出后, 主线程就不会再等待了)
-                    void**: 获取退出信息的, 前面返回void*, 这里用void*接收, 
+                    void**: 获取退出信息的, 前面返回void*, 这里用void**接收, 
                         1. 线程入口函数退出, void**保存返回值
                         2. pthread_exit退出, void**保存pthread_exit的参数
                         3. pthread_cancel: void** 获取到一个常数, PTHREAD_CANCEL
