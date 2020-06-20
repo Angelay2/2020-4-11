@@ -1,0 +1,130 @@
+UDP编程套接字
+    1.创建套接字
+        int socket(int domain, int type, int protocol);
+            domain: 地址域, 传入协议的一个版本, 表示网络层在使用什么样的协议
+                网络层: AF_INET: IPV4版本的IP协议
+                        AF_INET6: IPV6版本的IP协议
+            type: 套接字的类型
+                SOCK_STREAM: 流式套接字 ---> 对应的是tcp协议, 默认的协议就是TCP协议
+                SOCK_DGRAM: 数据报套接字 ---> 对应UDP协议, 默认的协议就是UDP协议
+            protocol: 英文含义为协议,表示
+                0: 采用套接字的默认协议
+                tcp: IPPROTO_TCP(宏) ---> 对应数字为6
+                udp: IPPRPTO_UDP(宏)  ---> 对应数字为17
+            返回值: 返回套接字操作句柄, 其实就是一文件描述符
+            eg:
+                udp套接字
+                int sockfd = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP)
+                    sockfd: 用来操作内核当中的sockaddr结构体
+    2. 绑定地址信息
+        int bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen);
+            sockfd: 套接字操作句柄
+            addr: 地址信息
+                包含 地址域 + ip + 端口
+            addrlen: 地址信息的长度
+
+            地址信息解析
+            struct sockaddr{
+                sa_family_t sa_family;// 地址域, 内核通过该变量俩确定传入的结构体应该如何来读取sa_data
+                char sa_data[14]; 字符数组 , 通过前面的地址域 可以知道如何去解析后面的字符数组
+            }
+
+        ipv4的版本的地址信息 (可看到16个字节信息都位于哪里)
+            struct sockaddr_in{
+                // 地址域(地址类型), 占两字节     后面的就是上面的sa_data(14字节)
+                // 端口号,占两字节
+                struct in_addr sin_addr// 指向下面结构体
+                // 填充信息 占8字节
+            }
+            struct in_addr{
+                in_addr_t s_addr;// 占4字节
+            }
+
+        bing的接口为什么设置为struct sockaddr,而不是设计为structsockaddr_in,就是为了兼容其他版本的协议
+            ipv6版本的协议  ---> IP ---> 16字节(128位), addelen
+                struct sockaddr_in6 addr6;
+                bind(sockfd, (struct sockaddr*)&addr6, sizeof(addr6));
+            ipv4版本信息:
+            struct sockaddr_in ---> struct sockaddr(把结构体对象强转为结构体指针) 
+            struct sockaddr_in addr;
+            eg: bind(sockfd, (struct sockaddr*)&addr, sizeof(addr));
+            一个接口就可以接受其他协议的地址信息, 如果其他协议的地址信息超过了16个字节, 因为bind的第三个参数可以满足内核对传入结构体的长度的把握
+    3. 发送数据
+        ssize_t sendto(int sockfd, const void* buf, size_t len, int flags, const struct sockaddr* dest_addr, socklen_t addlen);
+            sockfd: 套接字的操作句柄
+            buf: 要发送的数据, 可以发送结构体/字符串
+            len: 发送数据的长度
+            flags:
+                0: 阻塞发送,(不具备发送条件的话就阻塞)
+            dest_addr: 目标主机的地址信息, 要将数据发送到哪里去
+                struct sockaddr_in : 包含目标主机的IP地址和端口号
+            addrlen: 地址信息长度
+            返回值: 返回可发送的字节长度
+
+            client和sever都有发送缓冲区和接收缓冲区(这两个缓冲区都是在UDP协议里的传输层的 不是在应用层), client发送缓冲区的数据通过网络传输到sever接收缓冲区,
+        1. UDP没有缓冲区(错误), 只不过是UDP的数据是整条发送的, 所以在发送缓冲区当中打上UDP协议报头之后就交给网络层了
+
+    4. 接收数据
+        ssize_t recvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* src_addr, socklen_t* addrlen)
+        把客户端数据和服务端数据都发到对端, 
+            sockfd: 套接字操作句柄
+            buf: 将数据接收到哪里去
+            len: 最大接收多少字节
+            flags: 
+                0: 阻塞接收, 如果没有数据 就陷入阻塞
+            src_addr: 数据源主机的地址信息(源主机的地址信息要回复的地址 对方的地址信息)
+            addr_len: 地址信息长度
+
+    5. 关闭套接字
+        close(int sockfd);
+
+UDP通信的小demo
+    服务端: 创建套接字, 绑定地址信息, 接收数据, 发送数据, 关闭套接字
+    客户端: 创建套接字, 发送数据, 接收数据, 关闭套接字
+
+    可以封装接口:
+        1. 创建套接字
+        2. 接收& 发送数据
+        3. 绑定地址信息
+        4. 关闭套接字的接口
+
+TCP编程流程 & TCP接口
+谁先发起数据都是无所谓的
+    
+    客户端
+    1.创建套接字
+    2.不推荐大家手动绑定地址信息
+    3.发起连接
+        先向服务端发送我要发连接了(SYN),服务端回一个我也要接受连接了(SYN+ACK),服务端再回一个我知道你要接受了(ACK)
+    4.发送数据
+    5.接收数据
+    6.关闭套接字
+
+    服务端
+    1.创建套接字
+    2.绑定地址信息
+    3.监听
+        告知操作系统可以接收新连接
+            创建连接会有一个连接建立的过程,这个过程是在操作系统内核完成的,建立连接的过程称为三次握手, 
+            两队列(未完成连接队列, 已完成连接队列)
+            1. 处于三次握手(连接建立)过程当中的连接, 会被放到未完成连接队列当中, 
+            2. 处于连接建立完毕同时没有被获取的连接, 放到已完成队列当中
+    4.获取连接
+        从已完成连接队列当中获取连接
+    5.接收数据
+    6.发送数据
+    7.关闭套接字
+
+        int listen(int sockfd, int backlog);
+            backlog: 已完成连接队列大小 (有默认值 我们也可以给他传一个值), 
+                业务上的含义: 同一时刻并发的数量(无数个客户端同一时刻连接服务端时, 所能监听的最大数量)
+
+客户端: 也有一套接字
+        也有两缓冲区(接收缓冲区, 发送缓冲区)
+        向server端发起连接到其接收缓冲区时, 内核已建立好连接(双方已拿到对方的IP和端口号),只等我们server去获取连接,
+        在server获取连接的时候 会再创建一套接字, 称为新针对客户端创建出来的1对1的套接字描述符(和底下这个套接字进行通信) --服务员
+        又来一客户端, 发起连接, 程序在后台再创建一套接字描述符(服务员)进行1对1服务
+        
+服务端: 侦听套接字: 用来建立连接,获取连接(门迎, 真正提供服务的是酒店的服务员(1对1服务))
+        也有两缓冲区(接收缓冲区,发送缓冲区)
+
