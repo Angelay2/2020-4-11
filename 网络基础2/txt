@@ -107,10 +107,10 @@ http和dns协议是在应用层的,tcp是在传输层
         两种使用方式
         1. 直接使用wireshark进行抓包,  http底层使用的是tcp协议
             可以过滤 ip.addr == [ip] && tcp.port == [port]
-        
-HTTP协议是无状态的协议，有长连接和短连接的用法
-cookie是在header中传输
-HTTP是无状态的
+总结:        
+    HTTP协议是无状态的协议，有长连接和短连接的用法
+    cookie是在header中传输
+    HTTP是无状态的
 
 请求方式:
 http1.0，三种：post，get，head
