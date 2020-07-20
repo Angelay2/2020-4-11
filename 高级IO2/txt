@@ -1,0 +1,111 @@
+多路转接, 谁就绪了 我处理谁
+select优缺点:
+    优点:
+        1. 遵循的是posix标准(支持跨平台移植), 在win,linux都可以用
+        2. select的超时时间可以精确到微妙
+    缺点:
+        1. select采用轮循遍历, 监控的效率会随着文件描述符的增多而下降
+        2. select所能监控的文件描述符是有上限的(1024), 取决于内核_FD_SETSIZE宏的值
+        3. select监控文件描述符的时候, 需要将集合拷贝到内核当中, select发现有时间就绪之后, 同时需要将事件集合从内核拷贝到用户空间, 效率也会受到影响
+        4. select在返回的时候, 会将未就绪的文件描述符从集合当中去除掉, 导致下一次监控的时候,如果还需要去除掉的文件描述符, 那么就需要重新添加
+        5. select没有直接告诉程序员哪一个文件描述符就绪了, 需要程序员在返回的事件集合当中去判断
+
+多路转接值---poll
+    1. poll和select相比, 跨平台移植性不如select; 同时, poll和epoll相比, 监控的效率不如epoll,
+    2. 相较于select改进的点:
+        2.1 不限制监控的文件描述符了
+        2.2 相较于select之前的事件集合的方式, 改进成为事件结构 
+    3. 接口
+       int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+            fds: 事件结构数组
+			struct pollfd {
+               int   fd;         /* file descriptor */   关心的文件描述符是什么
+               short events;     /* requested events */  关心的文件描述符产生的事件是什么
+					POLLIN: 可读事件
+					POLLOUT: 可写事件
+					如果关心多个事件, 可以将多个事件按照按位或的方式连接起来, (POLLIN | POLLOUT , 既关心可读,也关心可写事件)
+					 ------> 更改比特位即可
+               short revents;    /* returned events */	 当关心的文件描述符产生的相应的关心的事件时, 将发生的事件放到revents当中返回给调用者; 判断revents是哪个事件产生, 每次监控之前, 内核会将该变量清空.
+           };
+			nfds: 指定fds事件结构数组当中有效的元素个数 (有效事件结构有几个, 确定你帮我遍历轮循的范围)
+			timeout: 超时等待时间
+				大于0: 返回就绪的文件描述符个数
+				等于0: 监控超时
+				小于0: pollll出错了
+		例子:
+			struct pollfd fd_arr[10];
+            fd_arr[0].fd = 3;
+            fd_arr[0].events = POLLIN;  // 关心三号文件描述符的产生的可读事件
+            poll(fd_arr, 1, 300);
+
+    poll的优缺点:
+        优点:
+            poll采用了时间结构的方式, 简化了代码的编写
+            poll不限制文件描述符的个数
+            不需要再二次监控的时候重新添加文件描述符,
+        缺点:
+            poll采用轮循遍历事件结构数组的方式, 随着文件描述符增多, 性能下降
+            poll不支持跨平台,
+            也没有告诉用户哪一个具体的文件描述符就绪了, 需要程序员进行遍历判断
+
+多路转接---epoll
+    1. 目前公认的在linux系统下监控性能最高的
+    2. 接口:
+        2.1 创建epoll操作句柄
+            int epoll_create(int size);
+                size: 本来的含义是定义epoll最大能够监控文件描述符的个数
+                    内核在2.6.8之后就弃用了, 现在采用动态内存开辟的方式来进行扩容
+                    要求size的值必须大于0 
+                返回值:
+                    返回epoll操作句柄
+                    内核观点: 创建操作句柄其实就是在内核当中创建了一个struct eventpoll结构体, 在这个结构体中有两个重要的变量, 一个是红黑树, 一个是双向链表,; 
+                    通过epoll的操作句柄找到struct eventpoll结构体, 从而对结构体中的变量进行操作,
+        2.2 epoll操作接口
+            int epoll_ctl(int epfd, int op, int fd, struct epoll_event* event);
+                epfd: epoll_create的返回值, epoll的操作句柄
+                op:
+                    EPOLL_CTL_ADD: 添加一个文件描述符(添加文件描述符对应的事件结构到红黑树中, 内核在监控的时候, 就一直监控的是这个红黑树)
+                    EPOLL_CTL_MOD: 修改一个文件描述符(修改文件描述符对应的事件结构的属性)
+                    EPOLL_CTL_DEL: 删除一个文件描述符(从红黑树当中删除文件描述符对应的事件结构)
+                创建一个epoll操作句柄是在内核中创建出eventpoll这个结构体, 结构体中有一双鞋链表(rdllist), 一红黑树(rbr); 他们两个保存的元素类型都是事件结构, 
+                    红黑树: 用来保存内核监控的事件结构; 
+                    双向链表: 用来保存内核监控时发现有事件就绪的事件结构的;
+                    这两个都是内核在维护的, 
+                fd: 告诉epoll用户关心的文件描述符是哪一个
+                event: epoll的事件结构, 类型是struct epoll_event结构体
+					struct epoll_event {
+               			uint32_t     events;      /* Epoll events */  用户对文件描述符所关心的事件
+									EPOLLIN: 可读事件
+									EPOLLOUT: 可写事件
+              		 	epoll_data_t data;        /* User data variable */ 
+           			};
+					// 联合当中的变量共用同一块内存
+                    typedef union epoll_data {
+                        void        *ptr;
+                            如果使用ptr: 需要包含fd的内容, ptr组织的结构体当中可以包含一些其他的数据, 一般直接选择fd就可以了
+                        int          fd;  // 用户关心的文件描述符和epoll_ctl当中的fd保持一致
+                        uint32_t     u32;
+                        uint64_t     u64;
+                    } epoll_data_t;
+                    注意: ptr和fd两者选择其一, 如果选择ptr, 需要传递一个结构体, 在结构体当中包含一个fd, 包含的fd的值需要和epoll_ctl当中的fd保持一致,
+                    一个文件描述符对应一个事件结构,
+                    操作系统内核是遍历红黑树来进行监控的, 所以比轮循遍历效率要高
+        2.3 监控接口
+            int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+                epfd: epoll操作句柄
+                events: 事件结构数组, 出参, 返回就绪的事件结构, 一个文件描述符对应一个事件结构
+                maxevents: 表示最大接收多少个事件结构
+                    和recv(sockfd, buf, size)原理一样
+                timeout:
+                    大于0: 带有超时时间的监控
+                    等于0: 非阻塞
+                    小于0: 阻塞
+                返回值: 
+                    大于0: 返回就绪的文件描述符个数
+                    等于0: 等待超时
+                    小于0: 监控出错
+        epoll_wait当中的事件结构的数据来源, 来自于双向链表, 拿到的数据是已就绪; 而红黑树是和双向链表打交道的
+        双向链表需要占用内存, PCB的虚拟地址空间并不能存储, 需要在物理内存中存储, 双向链表就是通过页表将epoll_wait事件结构直接映射到物理内存, 效率高的原因
+
+
+
