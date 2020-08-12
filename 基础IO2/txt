@@ -84,33 +84,14 @@ int dup2(int oldfd, int newfd) 重定向的
             eg: gcc main.c -o main -L [path] -l[库文件名称]
    动态库
         1. Windows环境下动态库的后缀是.dll
-        2. linux环境下动态库的后缀是.so, 前缀是lib
-        3. 动态库的生成和使用
-            生成:
-                gcc/g++
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    2. linux环境下动态库的后缀是.so, 前缀是lib
+    3. 动态库的生成和使用
+        动态库的生成:
+        	gcc/g++
+            -shared: 生成共享库的命令行参数
+            -fPIC: 产生位置无关的代码
+            gcc/g++ -shared -fPIC[源码文件] -o lib[待生成的动态库的名称].so
+        动态库的使用:
+        	-L [path] 直到链接的库文件路径;
+        	-l[库文件名称(去了前缀和后缀的名称)]: 直到链接库文件名称
+        	LD_LIBRARY_PATH : 搜索动态库的环境变量
